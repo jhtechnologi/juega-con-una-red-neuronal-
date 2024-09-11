@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Atrapa Atrapa el Panqueque</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #f0f0f0;
+            font-family: Arial, sans-serif;
+        }
+
+        #gameCanvas {
+            display: none; /* Ocultamos el canvas al principio */
+            margin: 0 auto;
+            background-color: #87CEEB;
+        }
+
+        #score, #levelDisplay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            font-size: 24px;
+            color: black; /* Cambiado a negro para mayor contraste */
+            text-shadow: 2px 2px 4px #000000;
+            z-index: 1000;
+        }
+
+        #levelDisplay {
+            top: 60px;
+            user-select: none; /* Evita que el texto sea seleccionable */
+        }
+
+        #menu, #instructions {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 1000;
+            background-color: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+
+        #menu {
+            display: block; /* Asegúrate de que el menú se muestre al principio */
+        }
+
+        #instructions {
+            display: none;
+        }
+
+        #menu button, #instructions button {
+            font-size: 18px;
+            padding: 10px 20px;
+            margin: 10px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        #menu button:hover, #instructions button:hover {
+            background-color: #45a049;
+        }
+
+        #instructions button {
+            background-color: #FF6347;
+        }
+
+        #exitButton {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 18px;
+            padding: 10px 20px;
+            background-color: #FF6347;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            z-index: 1000;
+        }
+
+        #exitButton:hover {
+            background-color: #FF4500;
+        }
+    </style>
+</head>
+<body>
+    <div id="menu">
+        <button onclick="startGame()">Iniciar Juego</button>
+        <button onclick="showInstructions()">Instrucciones</button>
+        <button onclick="exitGame()">Salir</button>
+    </div>
+    <div id="instructions">
+        <p>¡Bienvenido a Atrapa Atrapa el Panqueque!</p>
+        <p>Haz clic en las figuras que caen para obtener puntos.</p>
+        <p>El juego aumenta de dificultad con cada nivel.</p>
+        <button onclick="hideInstructions()">Cerrar</button>
+    </div>
+    <div id="score">Puntos: 0</div>
+    <div id="levelDisplay">Nivel: 1</div>
+    <canvas id="gameCanvas"></canvas>
+    <button id="exitButton" onclick="exitGame()">Salir</button>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        const candies = [];
+        let score = 0;
+        let level = 1;
+        const maxLevel = 20;
+        let isPaused = false;
+
+        // Definición del modelo de TensorFlow.js
+        const model = tf.sequential();
+        model.add(tf.layers.dense({units: 10, activation: 'relu', inputShape: [2]}));
+        model.add(tf.layers.dense({units: 10, activation: 'relu'}));
+        model.add(tf.layers.dense({units: 1, activation: 'linear'}));
+        model.compile({optimizer: 'adam', loss: 'meanSquaredError'});
+
+        // Datos de entrenamiento iniciales
+        const trainingData = tf.tensor2d([
+            [0, 1], [10, 2], [20, 3], [30, 4], [40, 5]
+        ]);
+        const outputData = tf.tensor2d([
+            [1], [2], [3], [4], [5]
+        ]);
+
+        model.fit(trainingData, outputData, {epochs: 100}).then(() => {
+            console.log('Modelo entrenado');
+        });
+
+        class Candy {
+            constructor(x, y, radius, color, shape) {
+                this.x = x;
+                this.y = y;
+                this.radius = radius;
+                this.color = color;
+                this.shape = shape;
+                this.dy = Math.random() * 1 + 0.5 + (level * 0.2); // Velocidad ajustada
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                switch (this.shape) {
+                    case 'circle':
+                        ctx.beginPath();
+                        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2, false);
+                        ctx.closePath();
+                        ctx.fill();
+                        break;
+                    case 'square':
+                        ctx.fillRect(this.x - this.radius, this.y - this.radius, this.radius * 2, this.radius * 2);
+                        break;
+                    case 'triangle':
+                        ctx.beginPath();
+                        ctx.moveTo(this.x, this.y - this.radius);
+                        ctx.lineTo(this.x - this.radius, this.y + this.radius);
+                        ctx.lineTo(this.x + this.radius, this.y + this.radius);
+                        ctx.closePath();
+                        ctx.fill();
+                        break;
+                    case 'hexagon':
+                        ctx.beginPath();
+                        for (let i = 0; i < 6; i++) {
+                            const angle = Math.PI / 6 * i;
+                            const xOffset = this.radius * Math.cos(angle);
+                            const yOffset = this.radius * Math.sin(angle);
+                            ctx.lineTo(this.x + xOffset, this.y + yOffset);
+                        }
+                        ctx.closePath();
+                        ctx.fill();
+                        break;
+                    case 'star':
+                        ctx.beginPath();
+                        for (let i = 0; i < 5; i++) {
+                            const angle = Math.PI / 5 * i * 2;
+                            const xOffset = this.radius * Math.cos(angle);
+                            const yOffset = this.radius * Math.sin(angle);
+                            ctx.lineTo(this.x + xOffset, this.y - yOffset);
+                        }
+                        ctx.closePath();
+                        ctx.fill();
+                        break;
+                    case 'diamond':
+                        ctx.beginPath();
+                        ctx.moveTo(this.x, this.y - this.radius);
+                        ctx.lineTo(this.x + this.radius, this.y);
+                        ctx.lineTo(this.x, this.y + this.radius);
+                        ctx.lineTo(this.x - this.radius, this.y);
+                        ctx.closePath();
+                        ctx.fill();
+                        break;
+                    case 'pentagon':
+                        ctx.beginPath();
+                        for (let i = 0; i < 5; i++) {
+                            const angle = Math.PI / 5 * i * 2;
+                            const xOffset = this.radius * Math.cos(angle);
+                            const yOffset = this.radius * Math.sin(angle);
+                            ctx.lineTo(this.x + xOffset, this.y - yOffset);
+                        }
+                        ctx.closePath();
+                        ctx.fill();
+                        break;
+                    case 'octagon':
+                        ctx.beginPath();
+                        for (let i = 0; i < 8; i++) {
+                            const angle = Math.PI / 4 * i;
+                            const xOffset = this.radius * Math.cos(angle);
+                            const yOffset = this.radius * Math.sin(angle);
+                            ctx.lineTo(this.x + xOffset, this.y - yOffset);
+                        }
+                        ctx.closePath();
+                        ctx.fill();
+                        break;
+                    default:
+                        console.warn('Forma no reconocida');
+                }
+            }
+
+            update() {
+                this.y += this.dy;
+                if (this.y - this.radius > canvas.height) {
+                    this.y = -this.radius;
+                    this.x = Math.random() * canvas.width;
+                }
+            }
+
+            isClicked(x, y) {
+                const dist = Math.sqrt((x - this.x) ** 2 + (y - this.y) ** 2);
+                return dist < this.radius;
+            }
+        }
+
+        function spawnCandy() {
+            const radius = Math.random() * 30 + 20; // Tamaño ajustado
+            const x = Math.random() * canvas.width;
+            const y = -radius;
+            const colors = ['#FF6347', '#FFBF00', '#4CAF50', '#00BFFF', '#8A2BE2'];
+            const shapes = ['circle', 'square', 'triangle', 'hexagon', 'star', 'diamond', 'pentagon', 'octagon'];
+            const color = colors[Math.floor(Math.random() * colors.length)];
+            const shape = shapes[Math.floor(Math.random() * shapes.length)];
+
+            candies.push(new Candy(x, y, radius, color, shape));
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            candies.forEach(candy => {
+                candy.draw();
+                candy.update();
+            });
+
+            document.getElementById('score').textContent = `Puntos: ${score}`;
+            document.getElementById('levelDisplay').textContent = `Nivel: ${level}`;
+        }
+
+        function updateGame() {
+            if (isPaused) return;
+            draw();
+            requestAnimationFrame(updateGame);
+        }
+
+        function startGame() {
+            document.getElementById('menu').style.display = 'none';
+            document.getElementById('gameCanvas').style.display = 'block';
+            canvas.style.display = 'block';
+            candies.length = 0; // Limpiar los caramelos existentes
+            score = 0;
+            level = 1;
+            for (let i = 0; i < 3; i++) {
+                spawnCandy();
+            }
+            updateGame();
+        }
+
+        function showInstructions() {
+            document.getElementById('menu').style.display = 'none';
+            document.getElementById('instructions').style.display = 'block';
+        }
+
+        function hideInstructions() {
+            document.getElementById('instructions').style.display = 'none';
+            document.getElementById('menu').style.display = 'block';
+        }
+
+        function exitGame() {
+            window.close();
+        }
+
+        canvas.addEventListener('click', (event) => {
+            const x = event.clientX;
+            const y = event.clientY;
+
+            candies.forEach((candy, index) => {
+                if (candy.isClicked(x, y)) {
+                    score += 10;
+                    candies.splice(index, 1);
+                    spawnCandy();
+                    checkLevel();
+                }
+            });
+        });
+
+        function checkLevel() {
+            const newLevel = Math.floor(score / 200) + 1; // Nivel aumenta cada 200 puntos
+            if (newLevel > level) {
+                level = newLevel;
+                // Ajusta el modelo según el nivel
+                console.log('Nivel actualizado:', level);
+            }
+        }
+    </script>
+</body>
+</html>
