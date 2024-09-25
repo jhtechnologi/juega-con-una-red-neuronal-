@@ -1,0 +1,480 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Atrapa Atrapa el Panqueque</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #f0f0f0;
+            font-family: Arial, sans-serif;
+        }
+
+        #gameCanvas {
+            display: none;
+            margin: 0 auto;
+            background-color: #87CEEB;
+        }
+
+        #menu {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-color: #333;
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+
+        .menu-button {
+            background-color: #FF6347;
+            color: white;
+            font-size: 24px;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 5px;
+            margin: 10px;
+            cursor: pointer;
+        }
+
+        .menu-button:hover {
+            background-color: #FF4500;
+        }
+
+        #score, #levelDisplay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            font-size: 24px;
+            color: black;
+            text-shadow: 2px 2px 4px #000000;
+            z-index: 1000;
+        }
+
+        #levelDisplay {
+            top: 60px;
+            user-select: none;
+        }
+
+        #exitButton {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 18px;
+            padding: 10px 20px;
+            background-color: #FF6347;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            z-index: 1000;
+        }
+
+        #exitButton:hover {
+            background-color: #FF4500;
+        }
+    </style>
+</head>
+<body>
+    <div id="menu">
+        <h1>Atrapa Atrapa el Panqueque</h1>
+        <button class="menu-button" onclick="startGame()">Iniciar Juego</button>
+        <button class="menu-button" onclick="continueGame()">Continuar</button>
+        <button class="menu-button" onclick="selectSession()">Seleccionar Sesión</button>
+    </div>
+
+    <div id="score">Puntos: 0</div>
+    <div id="levelDisplay">Nivel: 1</div>
+    <canvas id="gameCanvas"></canvas>
+    <button id="exitButton" onclick="exitGame()">Salir</button>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        const candies = [];
+        let score = 0;
+        let level = 1;
+        let isPaused = false;
+        let gameStarted = false;
+        let alertCandy = null; // Variable para el caramelo alerta
+
+        // Lista inicial de formas de caramelos desbloqueadas
+        const unlockedShapes = ['circle', 'square', 'triangle'];
+        // Lista de formas adicionales disponibles para desbloquear
+        const availableShapes = [
+            'hexagon', 'star', 'diamond', 'pentagon', 'octagon', 
+            'cross', 'heart', 'parallelogram', 'rhombus', 'trapezoid',
+            'crescent', 'oval', 'cloud', 'arrow', 'gear'
+        ];
+        const shapeColors = ['#FF6347', '#FFBF00', '#4CAF50', '#00BFFF', '#8A2BE2'];
+
+        // TensorFlow.js model (preentrenado)
+        const model = tf.sequential();
+        model.add(tf.layers.dense({units: 20, activation: 'relu', inputShape: [2]}));
+        model.add(tf.layers.dense({units: 20, activation: 'relu'}));
+        model.add(tf.layers.dense({units: 2, activation: 'linear'}));
+        model.compile({optimizer: 'adam', loss: 'meanSquaredError'});
+
+        model.fit(tf.tensor2d([[0, 1], [10, 2], [20, 3], [30, 4], [40, 5]]), tf.tensor2d([[1], [2], [3], [4], [5]]), {epochs: 10000})
+            .then(() => console.log('Modelo entrenado'));
+
+        class Candy {
+            constructor(x, y, radius, color, shape, isAlertCandy = false) {
+                this.x = x;
+                this.y = y;
+                this.radius = radius;
+                this.color = color;
+                this.shape = shape;
+                this.isAlertCandy = isAlertCandy; // Determina si es un caramelo alerta
+                this.dy = Math.random() * 1 + 0.5 + (level * 0.2);
+                this.alertTimer = 0; // Temporizador para el caramelo alerta
+            }
+
+            draw() {
+                if (this.isAlertCandy) {
+                    this.alertTimer += 0.1; // Aumenta el temporizador de alerta
+                    if (Math.floor(this.alertTimer) % 2 === 0) {
+                        ctx.fillStyle = 'red'; // Color de alerta
+                    } else {
+                        ctx.fillStyle = 'white'; // Color normal
+                    }
+                } else {
+                    ctx.fillStyle = this.color;
+                }
+
+                switch (this.shape) {
+                    case 'circle': this.drawCircle(); break;
+                    case 'square': this.drawSquare(); break;
+                    case 'triangle': this.drawTriangle(); break;
+                    case 'hexagon': this.drawHexagon(); break;
+                    case 'star': this.drawStar(); break;
+                    case 'diamond': this.drawDiamond(); break;
+                    case 'pentagon': this.drawPentagon(); break;
+                    case 'octagon': this.drawOctagon(); break;
+                    case 'cross': this.drawCross(); break;
+                    case 'heart': this.drawHeart(); break;
+                    case 'parallelogram': this.drawParallelogram(); break;
+                    case 'rhombus': this.drawRhombus(); break;
+                    case 'trapezoid': this.drawTrapezoid(); break;
+                    case 'crescent': this.drawCrescent(); break;
+                    case 'oval': this.drawOval(); break;
+                    case 'cloud': this.drawCloud(); break;
+                    case 'arrow': this.drawArrow(); break;
+                    case 'gear': this.drawGear(); break;
+                    default: console.warn('Forma no reconocida');
+                }
+            }
+
+            drawCircle() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            drawSquare() {
+                ctx.fillRect(this.x - this.radius, this.y - this.radius, this.radius * 2, this.radius * 2);
+            }
+
+            drawTriangle() {
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y - this.radius);
+                ctx.lineTo(this.x - this.radius, this.y + this.radius);
+                ctx.lineTo(this.x + this.radius, this.y + this.radius);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            drawHexagon() {
+                ctx.beginPath();
+                for (let i = 0; i < 6; i++) {
+                    const angle = Math.PI / 3 * i;
+                    const x = this.x + this.radius * Math.cos(angle);
+                    const y = this.y + this.radius * Math.sin(angle);
+                    ctx.lineTo(x, y);
+                }
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            drawStar() {
+                ctx.beginPath();
+                for (let i = 0; i < 5; i++) {
+                    const angle = Math.PI / 5 * i * 2;
+                    const x = this.x + this.radius * Math.cos(angle);
+                    const y = this.y - this.radius * Math.sin(angle);
+                    ctx.lineTo(x, y);
+                }
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            drawDiamond() {
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y - this.radius);
+                ctx.lineTo(this.x + this.radius, this.y);
+                ctx.lineTo(this.x, this.y + this.radius);
+                ctx.lineTo(this.x - this.radius, this.y);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            drawPentagon() {
+                ctx.beginPath();
+                for (let i = 0; i < 5; i++) {
+                    const angle = Math.PI / 5 * i * 2;
+                    const x = this.x + this.radius * Math.cos(angle);
+                    const y = this.y - this.radius * Math.sin(angle);
+                    ctx.lineTo(x, y);
+                }
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            drawOctagon() {
+                ctx.beginPath();
+                for (let i = 0; i < 8; i++) {
+                    const angle = Math.PI / 4 * i;
+                    const x = this.x + this.radius * Math.cos(angle);
+                    const y = this.y + this.radius * Math.sin(angle);
+                    ctx.lineTo(x, y);
+                }
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            drawCross() {
+                ctx.beginPath();
+                ctx.moveTo(this.x - this.radius, this.y);
+                ctx.lineTo(this.x + this.radius, this.y);
+                ctx.moveTo(this.x, this.y - this.radius);
+                ctx.lineTo(this.x, this.y + this.radius);
+                ctx.stroke();
+            }
+
+            drawHeart() {
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y + this.radius / 4);
+                ctx.bezierCurveTo(this.x - this.radius, this.y - this.radius,
+                                  this.x - this.radius / 2, this.y - this.radius / 2,
+                                  this.x, this.y - this.radius);
+                ctx.bezierCurveTo(this.x + this.radius / 2, this.y - this.radius / 2,
+                                  this.x + this.radius, this.y - this.radius,
+                                  this.x, this.y + this.radius / 4);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            drawParallelogram() {
+                ctx.beginPath();
+                ctx.moveTo(this.x - this.radius, this.y - this.radius / 2);
+                ctx.lineTo(this.x, this.y - this.radius);
+                ctx.lineTo(this.x + this.radius, this.y - this.radius / 2);
+                ctx.lineTo(this.x + this.radius / 2, this.y);
+                ctx.lineTo(this.x - this.radius / 2, this.y);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            drawRhombus() {
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y - this.radius);
+                ctx.lineTo(this.x + this.radius, this.y);
+                ctx.lineTo(this.x, this.y + this.radius);
+                ctx.lineTo(this.x - this.radius, this.y);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            drawTrapezoid() {
+                ctx.beginPath();
+                ctx.moveTo(this.x - this.radius, this.y - this.radius / 2);
+                ctx.lineTo(this.x + this.radius, this.y - this.radius / 2);
+                ctx.lineTo(this.x + this.radius / 2, this.y + this.radius / 2);
+                ctx.lineTo(this.x - this.radius / 2, this.y + this.radius / 2);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            drawCrescent() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.globalCompositeOperation = 'destination-out';
+                ctx.arc(this.x - this.radius / 2, this.y, this.radius, 0, Math.PI * 2);
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.fill();
+            }
+
+            drawOval() {
+                ctx.beginPath();
+                ctx.ellipse(this.x, this.y, this.radius, this.radius / 2, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            drawCloud() {
+                ctx.beginPath();
+                ctx.arc(this.x - this.radius / 2, this.y - this.radius / 2, this.radius, 0, Math.PI * 2);
+                ctx.arc(this.x + this.radius / 2, this.y - this.radius / 2, this.radius, 0, Math.PI * 2);
+                ctx.arc(this.x, this.y + this.radius / 2, this.radius, 0, Math.PI * 2);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            drawArrow() {
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y - this.radius);
+                ctx.lineTo(this.x + this.radius / 2, this.y);
+                ctx.lineTo(this.x - this.radius / 2, this.y);
+                ctx.closePath();
+                ctx.fill();
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y - this.radius);
+                ctx.lineTo(this.x, this.y - this.radius - this.radius / 2);
+                ctx.stroke();
+            }
+
+            drawGear() {
+                const numTeeth = 8;
+                const angle = Math.PI * 2 / numTeeth;
+                ctx.beginPath();
+                for (let i = 0; i < numTeeth; i++) {
+                    const x1 = this.x + this.radius * Math.cos(i * angle);
+                    const y1 = this.y + this.radius * Math.sin(i * angle);
+                    const x2 = this.x + (this.radius + 10) * Math.cos(i * angle);
+                    const y2 = this.y + (this.radius + 10) * Math.sin(i * angle);
+                    ctx.moveTo(x1, y1);
+                    ctx.lineTo(x2, y2);
+                }
+                ctx.closePath();
+                ctx.stroke();
+            }
+
+            update() {
+                this.y += this.dy;
+                if (this.y > canvas.height + this.radius) {
+                    if (this.isAlertCandy) {
+                        // Si el caramelo alerta llega al fondo, el jugador pierde
+                        alert('¡Perdiste! No tocaste el caramelo alerta.');
+                        exitGame(); // Salir del juego
+                    } else {
+                        // Elimina el caramelo si sale del canvas
+                        const index = candies.indexOf(this);
+                        if (index > -1) {
+                            candies.splice(index, 1);
+                        }
+                    }
+                }
+            }
+        }
+
+        function createCandy() {
+            // Decide si el caramelo es un caramelo alerta o normal
+            const isAlertCandy = Math.random() < 0.05; // 5% de probabilidad
+            // Selecciona una forma desbloqueada o aleatoria de las formas adicionales
+            const shapes = unlockedShapes.concat(availableShapes);
+            const shape = shapes[Math.floor(Math.random() * shapes.length)];
+            const radius = Math.random() * 20 + 15;
+            const x = Math.random() * (canvas.width - radius * 2) + radius;
+            const y = -radius;
+            const color = shapeColors[Math.floor(Math.random() * shapeColors.length)];
+            const candy = new Candy(x, y, radius, color, shape, isAlertCandy);
+            candies.push(candy);
+        }
+
+        function drawCandies() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            for (const candy of candies) {
+                candy.draw();
+                candy.update();
+            }
+            document.getElementById('score').innerText = `Puntos: ${score}`;
+            document.getElementById('levelDisplay').innerText = `Nivel: ${level}`;
+        }
+
+        function handleClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            for (const candy of candies) {
+                const dx = x - candy.x;
+                const dy = y - candy.y;
+                if (Math.sqrt(dx * dx + dy * dy) < candy.radius) {
+                    if (candy.isAlertCandy) {
+                        // Si es un caramelo alerta, el jugador no pierde puntos
+                        candies.splice(candies.indexOf(candy), 1);
+                        score += 20; // Puntos adicionales por tocar el caramelo alerta
+                        createCandy(); // Crea dos nuevos caramelos
+                        createCandy();
+                    } else {
+                        // Incrementa el puntaje y añade caramelos adicionales
+                        score += 10;
+                        candies.splice(candies.indexOf(candy), 1);
+                        createCandy(); // Crea dos nuevos caramelos
+                        createCandy();
+                    }
+                    if (score >= level * 100) {
+                        level++;
+                        // Añade más formas de caramelos desbloqueados cada dos niveles
+                        if (level % 2 === 0 && availableShapes.length > 0) {
+                            unlockedShapes.push(availableShapes.pop());
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        canvas.addEventListener('click', handleClick);
+
+        function gameLoop() {
+            if (!isPaused) {
+                drawCandies();
+                // Aumenta la probabilidad de crear caramelos
+                if (Math.random() < 0.005) createCandy(); // Reducido de 0.01 a 0.005
+            }
+            requestAnimationFrame(gameLoop);
+        }
+
+        function startGame() {
+            document.getElementById('menu').style.display = 'none';
+            canvas.style.display = 'block';
+            isPaused = false;
+            score = 0;
+            level = 1;
+            candies.length = 0; // Limpiar caramelos existentes
+            gameStarted = true;
+            gameLoop();
+        }
+
+        function continueGame() {
+            if (gameStarted) {
+                document.getElementById('menu').style.display = 'none';
+                canvas.style.display = 'block';
+                isPaused = false;
+                gameLoop();
+            } else {
+                alert('No hay sesión guardada para continuar.');
+            }
+        }
+
+        function exitGame() {
+            canvas.style.display = 'none';
+            document.getElementById('menu').style.display = 'block';
+            isPaused = true;
+        }
+
+        document.getElementById('startGame').addEventListener('click', startGame);
+        document.getElementById('continueGame').addEventListener('click', continueGame);
+        document.getElementById('exitGame').addEventListener('click', exitGame);
+
+    </script>
+</body>
+</html>
